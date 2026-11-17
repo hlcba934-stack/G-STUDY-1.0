@@ -117,6 +117,15 @@ def all_rows(conn, sql: str, params=()):
     return [_clean(dict(row)) for row in execute(conn, sql, params).fetchall()]
 
 
+def _unit_number(lesson: dict) -> tuple[int, str]:
+    digits = "".join(ch for ch in str(lesson.get("unit", "")) if ch.isdigit())
+    return (int(digits) if digits else 10**6, str(lesson.get("title", "")))
+
+
+def sorted_lessons(conn, columns: str):
+    return sorted(all_rows(conn, f"SELECT {columns} FROM lessons"), key=_unit_number)
+
+
 def _seed_curriculum(conn):
     units = [
         ("u1", "Unit 1: Family life", "Family life"),
@@ -297,7 +306,7 @@ def api_me():
 @app.get("/api/lessons")
 def api_lessons():
     with connection() as conn:
-        return respond({"lessons": all_rows(conn, "SELECT id,title,unit FROM lessons ORDER BY unit,title")})
+        return respond({"lessons": sorted_lessons(conn, "id,title,unit")})
 
 
 @app.get("/api/lesson/<path:lesson_id>")
@@ -366,7 +375,7 @@ def api_admin_get(action):
             }
             return respond(result)
         if action == "lessons":
-            return respond({"lessons": all_rows(conn, "SELECT id,title,unit,content_json FROM lessons ORDER BY unit,title")})
+            return respond({"lessons": sorted_lessons(conn, "id,title,unit,content_json")})
         if action == "students":
             return respond({"students": all_rows(conn, """SELECT u.id,u.email,u.name,u.created_at,COUNT(a.id) AS attempts,
                 COALESCE(AVG(a.score),0) AS average FROM users u LEFT JOIN attempts a ON a.user_id=u.id
@@ -591,6 +600,26 @@ def api_post(action):
 @app.errorhandler(404)
 def not_found(_error):
     return respond({"error": "not_found"}, 404)
+
+
+@app.errorhandler(405)
+def method_not_allowed(_error):
+    return respond({"error": "method_not_allowed"}, 405)
+
+
+@app.errorhandler(413)
+def payload_too_large(_error):
+    return respond({"error": "Dữ liệu gửi lên quá lớn."}, 413)
+
+
+@app.errorhandler(Exception)
+def unhandled_error(exc):
+    from werkzeug.exceptions import HTTPException
+
+    if isinstance(exc, HTTPException):
+        return respond({"error": exc.name}, exc.code or 500)
+    app.logger.exception("G-STUDY unhandled error")
+    return respond({"error": "Máy chủ gặp lỗi khi xử lý yêu cầu."}, 500)
 
 
 @app.get("/health")
